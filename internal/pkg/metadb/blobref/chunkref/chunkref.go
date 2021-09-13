@@ -31,13 +31,16 @@ type ChunkRef struct {
 	Key uuid.UUID `datastore:"-"`
 	// BlobRef is the key of parent BlobRef.
 	BlobRef uuid.UUID `datastore:"-"`
-
 	// Number is the position of the chunk in the BlobRef.
 	Number int32
 	// Size is the byte size of the chunk.
 	Size int32
 	// Status is the current status of the chunk.
 	blobref.Status
+
+	// Checksums contains checksums for the chunk object.
+	blobref.Checksums `datastore:",flatten"`
+
 	// Timestamps keeps track of creation and modification times and stores a randomly
 	// generated UUID to maintain consistency.
 	Timestamps timestamps.Timestamps
@@ -66,15 +69,30 @@ func (c *ChunkRef) LoadKey(k *datastore.Key) error {
 	return nil
 }
 
-// Save and Load replicates the default behaviors, however, they are required
-// for the KeyLoader interface.
+// Save and Load explictly need to call Checksums.Save/Load because the datastore
+// library doesn't call them for flattened fields.
 
+// Load implements the Datastore PropertyLoadSaver interface and converts Datastore
+// properties to corresponding struct fields.
 func (c *ChunkRef) Load(ps []datastore.Property) error {
+	if err := c.Checksums.Load(ps); err != nil {
+		return err
+	}
 	return datastore.LoadStruct(c, ps)
 }
 
+// Save implements the Datastore PropertyLoadSaver interface and converts struct fields
+// to Datastore properties.
 func (c *ChunkRef) Save() ([]datastore.Property, error) {
-	return datastore.SaveStruct(c)
+	ps, err := c.Checksums.Save()
+	if err != nil {
+		return nil, err
+	}
+	ps2, err := datastore.SaveStruct(c)
+	if err != nil {
+		return nil, err
+	}
+	return append(ps, ps2...), nil
 }
 
 func (c *ChunkRef) ObjectPath() string {
@@ -127,5 +145,8 @@ func (c *ChunkRef) ToProto() *pb.ChunkMetadata {
 		SessionId: c.BlobRef.String(),
 		Number:    int64(c.Number),
 		Size:      int64(c.Size),
+		Md5Hash:   c.MD5Hash,
+		Crc32C:    c.CRC32C,
+		HasCrc32C: true,
 	}
 }

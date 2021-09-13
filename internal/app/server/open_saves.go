@@ -17,7 +17,9 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"fmt"
+	"hash/crc32"
 	"io"
 
 	"github.com/google/uuid"
@@ -50,6 +52,8 @@ type openSavesServer struct {
 	metaDB     *metadb.MetaDB
 	cacheStore *cache.Cache
 
+	crc32cTable *crc32.Table
+
 	pb.UnimplementedOpenSavesServer
 }
 
@@ -75,10 +79,11 @@ func newOpenSavesServer(ctx context.Context, cloud, project, bucket, cacheAddr s
 		}
 		cache := cache.New(redis.NewRedis(cacheAddr))
 		server := &openSavesServer{
-			cloud:      cloud,
-			blobStore:  gcs,
-			metaDB:     metadb,
-			cacheStore: cache,
+			cloud:       cloud,
+			blobStore:   gcs,
+			metaDB:      metadb,
+			cacheStore:  cache,
+			crc32cTable: crc32.MakeTable(crc32.Castagnoli),
 		}
 		return server, nil
 	default:
@@ -253,10 +258,20 @@ func (s *openSavesServer) insertInlineBlob(ctx context.Context, stream pb.OpenSa
 		)
 	}
 	blob := buffer.Bytes()
+	md5, crc32c := md5.New(), crc32.New(s.crc32cTable)
+	md5, crc32c = updateChecksums(blob, md5, crc32c)
+	md5s, crc32cs := md5.Sum(nil), crc32c.Sum32()
+	if err := verifyChecksumsIfPresent(meta, md5s, crc32cs); err != nil {
+		log.Error(err)
+		return err
+	}
+	// UpdateRecord also marks any associated external blob for deletion.
 	record, err := s.metaDB.UpdateRecord(ctx, meta.GetStoreKey(), meta.GetRecordKey(),
 		func(record *record.Record) (*record.Record, error) {
 			record.Blob = blob
 			record.BlobSize = size
+			record.MD5Hash = md5s
+			record.CRC32C = crc32cs
 			return record, nil
 		})
 	if err != nil {
@@ -302,6 +317,7 @@ func (s *openSavesServer) insertExternalBlob(ctx context.Context, stream pb.Open
 	}()
 
 	written := int64(0)
+	md5, crc32c := md5.New(), crc32.New(s.crc32cTable)
 	for {
 		req, err := stream.Recv()
 		if err == io.EOF {
@@ -321,6 +337,7 @@ func (s *openSavesServer) insertExternalBlob(ctx context.Context, stream pb.Open
 			return err
 		}
 		written += int64(n)
+		md5, crc32c = updateChecksums(fragment, md5, crc32c)
 	}
 	err = writer.Close()
 	writer = nil
@@ -338,6 +355,12 @@ func (s *openSavesServer) insertExternalBlob(ctx context.Context, stream pb.Open
 		s.blobRefFail(ctx, blobref)
 		return status.Errorf(codes.DataLoss,
 			"Written byte length (%v) != blob length in metadata sent from client (%v)", written, meta.GetSize())
+	}
+	blobref.MD5Hash = md5.Sum(nil)
+	blobref.CRC32C = crc32c.Sum32()
+	if err := verifyChecksumsIfPresent(meta, blobref.MD5Hash, blobref.CRC32C); err != nil {
+		log.Error(err)
+		return err
 	}
 	record, _, err := s.metaDB.PromoteBlobRefToCurrent(ctx, blobref)
 	if err != nil {
@@ -381,6 +404,9 @@ func (s *openSavesServer) getExternalBlob(ctx context.Context, req *pb.GetBlobRe
 		log.Errorf("GetBlobRef returned error for blob ref (%v): %v", record.ExternalBlob, err)
 		return err
 	}
+
+	meta := blobref.ToProto()
+	stream.Send(&pb.GetBlobResponse{Response: &pb.GetBlobResponse_Metadata{Metadata: meta}})
 
 	reader, err := s.blobStore.NewReader(ctx, blobref.ObjectPath())
 	if err != nil {
@@ -426,15 +452,13 @@ func (s *openSavesServer) GetBlob(req *pb.GetBlobRequest, stream pb.OpenSaves_Ge
 		return err
 	}
 
-	meta := &pb.BlobMetadata{
-		StoreKey:  req.GetStoreKey(),
-		RecordKey: rr.Key,
-		Size:      rr.BlobSize,
-	}
-	stream.Send(&pb.GetBlobResponse{Response: &pb.GetBlobResponse_Metadata{Metadata: meta}})
 	if rr.ExternalBlob != uuid.Nil {
 		return s.getExternalBlob(ctx, req, stream, rr)
 	}
+
+	// Handle the inline blob here.
+	meta := rr.GetInlineBlobMetadata()
+	stream.Send(&pb.GetBlobResponse{Response: &pb.GetBlobResponse_Metadata{Metadata: meta}})
 	err = stream.Send(&pb.GetBlobResponse{Response: &pb.GetBlobResponse_Content{Content: rr.Blob}})
 	if err != nil {
 		log.Errorf("GetBlob: Stream send error for store (%v), record (%v): %v", req.GetRecordKey(), rr.Key, err)
@@ -508,6 +532,7 @@ func (s *openSavesServer) UploadChunk(stream pb.OpenSaves_UploadChunkServer) err
 	}()
 
 	written := 0
+	md5, crc32c := md5.New(), crc32.New(s.crc32cTable)
 	for {
 		req, err := stream.Recv()
 		if err == io.EOF {
@@ -526,6 +551,7 @@ func (s *openSavesServer) UploadChunk(stream pb.OpenSaves_UploadChunkServer) err
 			log.Errorf("UploadChunk: BlobStore write error: %v", err)
 			return err
 		}
+		md5, crc32c = updateChecksums(fragment, md5, crc32c)
 		written += n
 		// TODO(yuryu): This is not suitable for unit tests until we make the value
 		// configurable, or have a BlobStore mock.
@@ -550,6 +576,14 @@ func (s *openSavesServer) UploadChunk(stream pb.OpenSaves_UploadChunkServer) err
 	// Update the chunk size based on the actual bytes written
 	// MarkChunkRefReady commits the new change to Datastore
 	chunk.Size = int32(written)
+	chunk.MD5Hash = md5.Sum(nil)
+	chunk.CRC32C = crc32c.Sum32()
+
+	if err := verifyChecksumsIfPresent(meta, chunk.MD5Hash, chunk.CRC32C); err != nil {
+		log.Error(err)
+		return err
+	}
+
 	if err := s.metaDB.MarkChunkRefReady(ctx, chunk); err != nil {
 		log.Errorf("Failed to update chunkref metadata (%v): %v", chunk.Key, err)
 		s.chunkRefFail(ctx, chunk)

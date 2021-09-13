@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	pb "github.com/googleforgames/open-saves/api"
 	"github.com/googleforgames/open-saves/internal/pkg/cache"
+	"github.com/googleforgames/open-saves/internal/pkg/metadb/blobref"
 	"github.com/googleforgames/open-saves/internal/pkg/metadb/timestamps"
 	"github.com/vmihailenco/msgpack/v5"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -39,6 +40,10 @@ type Record struct {
 	Tags         []string
 	OpaqueString string `datastore:",noindex"`
 
+	// Checksums have checksums for inline blobs.
+	// Note that a BlobRef object doesn't exist for inline blobs.
+	blobref.Checksums `datastore:",flatten"`
+
 	// Timestamps keeps track of creation and modification times and stores a randomly
 	// generated UUID to maintain consistency.
 	Timestamps timestamps.Timestamps
@@ -58,8 +63,8 @@ var _ cache.Cacheable = new(Record)
 
 const externalBlobPropertyName = "ExternalBlob"
 
-// Save and Load for Record replicate the default behaviors, however, they are
-// explicitly required to implement the KeyLoader interface.
+// Save and Load explictly need to call Checksums.Save/Load because the datastore
+// library doesn't call them for flattened fields.
 
 // Save implements the Datastore PropertyLoadSaver interface and converts struct fields
 // to Datastore properties.
@@ -70,6 +75,12 @@ func (r *Record) Save() ([]datastore.Property, error) {
 	}
 	properties = append(properties,
 		timestamps.UUIDToDatastoreProperty(externalBlobPropertyName, r.ExternalBlob, false))
+
+	checksums, err := r.Checksums.Save()
+	if err != nil {
+		return nil, err
+	}
+	properties = append(properties, checksums...)
 	return properties, nil
 }
 
@@ -159,4 +170,16 @@ func (r *Record) EncodeBytes() ([]byte, error) {
 		return nil, err
 	}
 	return b, nil
+}
+
+// GetInlineBlobMetadata returns a BlobMetadata proto for the inline blob.
+func (r *Record) GetInlineBlobMetadata() *pb.BlobMetadata {
+	return &pb.BlobMetadata{
+		StoreKey:  r.StoreKey,
+		RecordKey: r.Key,
+		Size:      r.BlobSize,
+		Md5Hash:   r.MD5Hash,
+		Crc32C:    r.CRC32C,
+		HasCrc32C: true,
+	}
 }

@@ -38,6 +38,11 @@ type BlobRef struct {
 	// Chunked is whether the BlobRef is chunked or not.
 	Chunked bool
 
+	// Checksums have checksums for each blob object associated with the BlobRef entity.
+	// Record.{MD5Hash,CRC32C} must be used for inline blobs, and
+	// ChunkRef.{MD5Hash,CRC32C} must be used for chunked blobs.
+	Checksums `datastore:",flatten"`
+
 	// Timestamps keeps track of creation and modification times and stores a randomly
 	// generated UUID to maintain consistency.
 	Timestamps timestamps.Timestamps
@@ -49,18 +54,29 @@ var _ datastore.KeyLoader = new(BlobRef)
 
 // These functions need to be implemented here instead of the datastore package because
 // go doesn't permit to define additional receivers in another package.
-// Save and Load replicates the default behaviors, however, they are required
-// for the KeyLoader interface.
+// Save and Load explictly need to call Checksums.Save/Load because the datastore
+// library doesn't call them for flattened fields.
 
 // Save implements the Datastore PropertyLoadSaver interface and converts the properties
 // field in the struct to separate Datastore properties.
 func (b *BlobRef) Save() ([]datastore.Property, error) {
-	return datastore.SaveStruct(b)
+	ps, err := b.Checksums.Save()
+	if err != nil {
+		return nil, err
+	}
+	ps2, err := datastore.SaveStruct(b)
+	if err != nil {
+		return nil, err
+	}
+	return append(ps, ps2...), nil
 }
 
 // Load implements the Datastore PropertyLoadSaver interface and converts Datstore
 // properties to the Properties field.
 func (b *BlobRef) Load(ps []datastore.Property) error {
+	if err := b.Checksums.Load(ps); err != nil {
+		return err
+	}
 	return datastore.LoadStruct(b, ps)
 }
 
@@ -109,5 +125,8 @@ func (b *BlobRef) ToProto() *pb.BlobMetadata {
 		StoreKey:  b.StoreKey,
 		RecordKey: b.RecordKey,
 		Size:      b.Size,
+		Md5Hash:   b.MD5Hash,
+		Crc32C:    b.CRC32C,
+		HasCrc32C: true,
 	}
 }
