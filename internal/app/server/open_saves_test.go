@@ -192,11 +192,17 @@ func cleanupBlobs(ctx context.Context, t *testing.T, storeKey, recordkey string)
 	}
 }
 
-func setupTestRecord(ctx context.Context, t *testing.T, client pb.OpenSavesClient, storeKey string, record *pb.Record) {
+func setupTestRecord(ctx context.Context, t *testing.T, client pb.OpenSavesClient, storeKey string, record *pb.Record) *pb.Record {
+	t.Helper()
+	return setupTestRecordWithHint(ctx, t, client, storeKey, record, nil)
+}
+
+func setupTestRecordWithHint(ctx context.Context, t *testing.T, client pb.OpenSavesClient, storeKey string, record *pb.Record, hint *pb.Hint) *pb.Record {
 	t.Helper()
 	req := &pb.CreateRecordRequest{
 		StoreKey: storeKey,
 		Record:   record,
+		Hint:     hint,
 	}
 	res, err := client.CreateRecord(ctx, req)
 	if err != nil {
@@ -221,13 +227,14 @@ func setupTestRecord(ctx context.Context, t *testing.T, client pb.OpenSavesClien
 		assertEqualRecord(t, record, res)
 		assert.True(t, res.GetCreatedAt().AsTime().Equal(res.GetUpdatedAt().AsTime()))
 	}
+	return res
 }
 
 func TestOpenSaves_CreateGetDeleteStore(t *testing.T) {
 	ctx := context.Background()
 	_, listener := getOpenSavesServer(ctx, t, "gcp")
 	_, client := getTestClient(ctx, t, listener)
-	storeKey := uuid.New().String()
+	storeKey := uuid.NewString()
 	store := &pb.Store{
 		Key:     storeKey,
 		Name:    "test-createGetDeleteStore-store",
@@ -254,11 +261,11 @@ func TestOpenSaves_CreateGetDeleteRecord(t *testing.T) {
 	ctx := context.Background()
 	_, listener := getOpenSavesServer(ctx, t, "gcp")
 	_, client := getTestClient(ctx, t, listener)
-	storeKey := uuid.New().String()
+	storeKey := uuid.NewString()
 	store := &pb.Store{Key: storeKey}
 	setupTestStore(ctx, t, client, store)
 
-	recordKey := uuid.New().String()
+	recordKey := uuid.NewString()
 	const testBlobSize = int64(42)
 	record := &pb.Record{
 		Key:          recordKey,
@@ -289,26 +296,14 @@ func TestOpenSaves_UpdateRecordSimple(t *testing.T) {
 	ctx := context.Background()
 	_, listener := getOpenSavesServer(ctx, t, "gcp")
 	_, client := getTestClient(ctx, t, listener)
-	storeKey := uuid.New().String()
+	storeKey := uuid.NewString()
 	store := &pb.Store{Key: storeKey}
 	setupTestStore(ctx, t, client, store)
 
-	recordKey := uuid.New().String()
-	createReq := &pb.CreateRecordRequest{
-		StoreKey: storeKey,
-		Record: &pb.Record{
-			Key:     recordKey,
-			OwnerId: "owner",
-		},
-	}
-	created, err := client.CreateRecord(ctx, createReq)
-	if err != nil {
-		t.Fatalf("CreateRecord failed: %v", err)
-	}
-	t.Cleanup(func() {
-		deleteReq := &pb.DeleteRecordRequest{StoreKey: storeKey, Key: recordKey}
-		_, err := client.DeleteRecord(ctx, deleteReq)
-		assert.NoError(t, err)
+	recordKey := uuid.NewString()
+	created := setupTestRecord(ctx, t, client, storeKey, &pb.Record{
+		Key:     recordKey,
+		OwnerId: "owner",
 	})
 
 	const testBlobSize = int64(123)
@@ -342,8 +337,8 @@ func TestOpenSaves_ListStoresNamePerfectMatch(t *testing.T) {
 	ctx := context.Background()
 	_, listener := getOpenSavesServer(ctx, t, "gcp")
 	_, client := getTestClient(ctx, t, listener)
-	storeKey := uuid.New().String()
-	storeName := "test store " + uuid.New().String()
+	storeKey := uuid.NewString()
+	storeName := "test store " + uuid.NewString()
 	store := &pb.Store{
 		Key:  storeKey,
 		Name: storeName,
@@ -371,35 +366,26 @@ func TestOpenSaves_CacheRecordsWithHints(t *testing.T) {
 	ctx := context.Background()
 	server, listener := getOpenSavesServer(ctx, t, "gcp")
 	_, client := getTestClient(ctx, t, listener)
-	storeKey := uuid.New().String()
+	storeKey := uuid.NewString()
 	store := &pb.Store{Key: storeKey}
 	setupTestStore(ctx, t, client, store)
 
-	recordKey := uuid.New().String()
+	recordKey := uuid.NewString()
 	const testBlobSize = int64(256)
-	createReq := &pb.CreateRecordRequest{
-		StoreKey: storeKey,
-		Record: &pb.Record{
-			Key:      recordKey,
-			BlobSize: testBlobSize,
-			Tags:     []string{"tag1", "tag2"},
-			OwnerId:  "owner",
-			Properties: map[string]*pb.Property{
-				"prop1": {
-					Type:  pb.Property_INTEGER,
-					Value: &pb.Property_IntegerValue{IntegerValue: -42},
-				},
+	expected := &pb.Record{
+		Key:      recordKey,
+		BlobSize: testBlobSize,
+		Tags:     []string{"tag1", "tag2"},
+		OwnerId:  "owner",
+		Properties: map[string]*pb.Property{
+			"prop1": {
+				Type:  pb.Property_INTEGER,
+				Value: &pb.Property_IntegerValue{IntegerValue: -42},
 			},
 		},
-		Hint: &pb.Hint{
-			DoNotCache: true,
-		},
 	}
-	expected := createReq.Record
-	created, err := client.CreateRecord(ctx, createReq)
-	if err != nil {
-		t.Fatalf("CreateRecord failed: %v", err)
-	}
+	created := setupTestRecordWithHint(ctx, t, client, storeKey, expected, &pb.Hint{DoNotCache: true})
+
 	expected.CreatedAt = timestamppb.Now()
 	expected.UpdatedAt = expected.CreatedAt
 	assertEqualRecord(t, expected, created)
@@ -408,7 +394,7 @@ func TestOpenSaves_CacheRecordsWithHints(t *testing.T) {
 	// Check do not cache hint was honored.
 	cacheKey := record.CacheKey(storeKey, recordKey)
 	recFromCache := new(record.Record)
-	err = server.cacheStore.Get(ctx, cacheKey, recFromCache)
+	err := server.cacheStore.Get(ctx, cacheKey, recFromCache)
 	assert.Error(t, err, "should not have retrieved record from cache after Create with DoNotCache hint")
 
 	getReq := &pb.GetRecordRequest{
@@ -601,9 +587,9 @@ func TestOpenSaves_InlineBlobSimple(t *testing.T) {
 	ctx := context.Background()
 	_, listener := getOpenSavesServer(ctx, t, "gcp")
 	_, client := getTestClient(ctx, t, listener)
-	store := &pb.Store{Key: uuid.New().String()}
+	store := &pb.Store{Key: uuid.NewString()}
 	setupTestStore(ctx, t, client, store)
-	record := &pb.Record{Key: uuid.New().String()}
+	record := &pb.Record{Key: uuid.NewString()}
 	setupTestRecord(ctx, t, client, store.Key, record)
 
 	beforeCreateBlob := time.Now()
@@ -640,9 +626,9 @@ func TestOpenSaves_ExternalBlobSimple(t *testing.T) {
 	ctx := context.Background()
 	_, listener := getOpenSavesServer(ctx, t, "gcp")
 	_, client := getTestClient(ctx, t, listener)
-	store := &pb.Store{Key: uuid.New().String()}
+	store := &pb.Store{Key: uuid.NewString()}
 	setupTestStore(ctx, t, client, store)
-	record := &pb.Record{Key: uuid.New().String()}
+	record := &pb.Record{Key: uuid.NewString()}
 	setupTestRecord(ctx, t, client, store.Key, record)
 
 	const blobSize = 4*1024*1024 + 13 // 4 Mi + 13 B
@@ -684,51 +670,32 @@ func TestOpenSaves_QueryRecords_Filter(t *testing.T) {
 	ctx := context.Background()
 	_, listener := getOpenSavesServer(ctx, t, "gcp")
 	_, client := getTestClient(ctx, t, listener)
-	storeKey := uuid.New().String()
+	storeKey := uuid.NewString()
 	store := &pb.Store{Key: storeKey}
 	setupTestStore(ctx, t, client, store)
 
-	recordKey1 := uuid.New().String()
+	recordKey1 := uuid.NewString()
 	stringVal1 := &pb.Property_StringValue{StringValue: "foo"}
-	createReq := &pb.CreateRecordRequest{
-		StoreKey: storeKey,
-		Record: &pb.Record{
-			Key: recordKey1,
-			Properties: map[string]*pb.Property{
-				"prop1": {
-					Type:  pb.Property_STRING,
-					Value: stringVal1,
-				},
+	setupTestRecord(ctx, t, client, storeKey, &pb.Record{
+		Key: recordKey1,
+		Properties: map[string]*pb.Property{
+			"prop1": {
+				Type:  pb.Property_STRING,
+				Value: stringVal1,
 			},
 		},
-	}
-	_, err := client.CreateRecord(ctx, createReq)
-	if err != nil {
-		t.Fatalf("CreateRecord failed: %v", err)
-	}
-	t.Cleanup(func() {
-		deleteReq := &pb.DeleteRecordRequest{StoreKey: storeKey, Key: recordKey1}
-		_, err := client.DeleteRecord(ctx, deleteReq)
-		assert.NoError(t, err)
 	})
 
-	recordKey2 := uuid.New().String()
-	createReq.Record.Key = recordKey2
+	recordKey2 := uuid.NewString()
 	stringVal2 := &pb.Property_StringValue{StringValue: "bar"}
-	createReq.Record.Properties = map[string]*pb.Property{
-		"prop1": {
-			Type:  pb.Property_STRING,
-			Value: stringVal2,
+	setupTestRecord(ctx, t, client, storeKey, &pb.Record{
+		Key: recordKey2,
+		Properties: map[string]*pb.Property{
+			"prop1": {
+				Type:  pb.Property_STRING,
+				Value: stringVal2,
+			},
 		},
-	}
-	_, err = client.CreateRecord(ctx, createReq)
-	if err != nil {
-		t.Fatalf("CreateRecord failed: %v", err)
-	}
-	t.Cleanup(func() {
-		deleteReq := &pb.DeleteRecordRequest{StoreKey: storeKey, Key: recordKey2}
-		_, err := client.DeleteRecord(ctx, deleteReq)
-		assert.NoError(t, err)
 	})
 
 	queryReq := &pb.QueryRecordsRequest{
@@ -758,39 +725,20 @@ func TestOpenSaves_QueryRecords_Owner(t *testing.T) {
 	ctx := context.Background()
 	_, listener := getOpenSavesServer(ctx, t, "gcp")
 	_, client := getTestClient(ctx, t, listener)
-	storeKey := uuid.New().String()
+	storeKey := uuid.NewString()
 	store := &pb.Store{Key: storeKey}
 	setupTestStore(ctx, t, client, store)
 
-	recordKey1 := uuid.New().String()
-	createReq := &pb.CreateRecordRequest{
-		StoreKey: storeKey,
-		Record: &pb.Record{
-			Key:     recordKey1,
-			OwnerId: "owner1",
-		},
-	}
-	_, err := client.CreateRecord(ctx, createReq)
-	if err != nil {
-		t.Fatalf("CreateRecord failed: %v", err)
-	}
-	t.Cleanup(func() {
-		deleteReq := &pb.DeleteRecordRequest{StoreKey: storeKey, Key: recordKey1}
-		_, err := client.DeleteRecord(ctx, deleteReq)
-		assert.NoError(t, err)
+	recordKey1 := uuid.NewString()
+	setupTestRecord(ctx, t, client, storeKey, &pb.Record{
+		Key:     recordKey1,
+		OwnerId: "owner1",
 	})
 
-	recordKey2 := uuid.New().String()
-	createReq.Record.Key = recordKey2
-	createReq.Record.OwnerId = "owner2"
-	_, err = client.CreateRecord(ctx, createReq)
-	if err != nil {
-		t.Fatalf("CreateRecord failed: %v", err)
-	}
-	t.Cleanup(func() {
-		deleteReq := &pb.DeleteRecordRequest{StoreKey: storeKey, Key: recordKey2}
-		_, err := client.DeleteRecord(ctx, deleteReq)
-		assert.NoError(t, err)
+	recordKey2 := uuid.NewString()
+	setupTestRecord(ctx, t, client, storeKey, &pb.Record{
+		Key:     recordKey2,
+		OwnerId: "owner2",
 	})
 
 	queryReq := &pb.QueryRecordsRequest{
@@ -810,39 +758,20 @@ func TestOpenSaves_QueryRecords_Tags(t *testing.T) {
 	ctx := context.Background()
 	_, listener := getOpenSavesServer(ctx, t, "gcp")
 	_, client := getTestClient(ctx, t, listener)
-	storeKey := uuid.New().String()
+	storeKey := uuid.NewString()
 	store := &pb.Store{Key: storeKey}
 	setupTestStore(ctx, t, client, store)
 
-	recordKey1 := uuid.New().String()
-	createReq := &pb.CreateRecordRequest{
-		StoreKey: storeKey,
-		Record: &pb.Record{
-			Key:  recordKey1,
-			Tags: []string{"foo", "bar"},
-		},
-	}
-	_, err := client.CreateRecord(ctx, createReq)
-	if err != nil {
-		t.Fatalf("CreateRecord failed: %v", err)
-	}
-	t.Cleanup(func() {
-		deleteReq := &pb.DeleteRecordRequest{StoreKey: storeKey, Key: recordKey1}
-		_, err := client.DeleteRecord(ctx, deleteReq)
-		assert.NoError(t, err)
+	recordKey1 := uuid.NewString()
+	setupTestRecord(ctx, t, client, storeKey, &pb.Record{
+		Key:  recordKey1,
+		Tags: []string{"foo", "bar"},
 	})
 
-	recordKey2 := uuid.New().String()
-	createReq.Record.Key = recordKey2
-	createReq.Record.Tags = []string{"hello", "world"}
-	_, err = client.CreateRecord(ctx, createReq)
-	if err != nil {
-		t.Fatalf("CreateRecord failed: %v", err)
-	}
-	t.Cleanup(func() {
-		deleteReq := &pb.DeleteRecordRequest{StoreKey: storeKey, Key: recordKey2}
-		_, err := client.DeleteRecord(ctx, deleteReq)
-		assert.NoError(t, err)
+	recordKey2 := uuid.NewString()
+	setupTestRecord(ctx, t, client, storeKey, &pb.Record{
+		Key:  recordKey2,
+		Tags: []string{"hello", "world"},
 	})
 
 	queryReq := &pb.QueryRecordsRequest{
