@@ -270,7 +270,7 @@ func (s *openSavesServer) insertInlineBlob(ctx context.Context, stream pb.OpenSa
 		func(record *record.Record) (*record.Record, error) {
 			record.Blob = blob
 			record.BlobSize = size
-			record.MD5Hash = md5s
+			record.MD5 = md5s
 			record.CRC32C = crc32cs
 			return record, nil
 		})
@@ -356,9 +356,9 @@ func (s *openSavesServer) insertExternalBlob(ctx context.Context, stream pb.Open
 		return status.Errorf(codes.DataLoss,
 			"Written byte length (%v) != blob length in metadata sent from client (%v)", written, meta.GetSize())
 	}
-	blobref.MD5Hash = md5.Sum(nil)
+	blobref.MD5 = md5.Sum(nil)
 	blobref.CRC32C = crc32c.Sum32()
-	if err := verifyChecksumsIfPresent(meta, blobref.MD5Hash, blobref.CRC32C); err != nil {
+	if err := verifyChecksumsIfPresent(meta, blobref.MD5, blobref.CRC32C); err != nil {
 		log.Error(err)
 		return err
 	}
@@ -576,10 +576,10 @@ func (s *openSavesServer) UploadChunk(stream pb.OpenSaves_UploadChunkServer) err
 	// Update the chunk size based on the actual bytes written
 	// MarkChunkRefReady commits the new change to Datastore
 	chunk.Size = int32(written)
-	chunk.MD5Hash = md5.Sum(nil)
+	chunk.MD5 = md5.Sum(nil)
 	chunk.CRC32C = crc32c.Sum32()
 
-	if err := verifyChecksumsIfPresent(meta, chunk.MD5Hash, chunk.CRC32C); err != nil {
+	if err := verifyChecksumsIfPresent(meta, chunk.MD5, chunk.CRC32C); err != nil {
 		log.Error(err)
 		return err
 	}

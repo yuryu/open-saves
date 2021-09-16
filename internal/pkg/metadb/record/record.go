@@ -76,11 +76,6 @@ func (r *Record) Save() ([]datastore.Property, error) {
 	properties = append(properties,
 		timestamps.UUIDToDatastoreProperty(externalBlobPropertyName, r.ExternalBlob, false))
 
-	checksums, err := r.Checksums.Save()
-	if err != nil {
-		return nil, err
-	}
-	properties = append(properties, checksums...)
 	return properties, nil
 }
 
@@ -178,8 +173,8 @@ func (r *Record) GetInlineBlobMetadata() *pb.BlobMetadata {
 		StoreKey:  r.StoreKey,
 		RecordKey: r.Key,
 		Size:      r.BlobSize,
-		Md5Hash:   r.MD5Hash,
-		Crc32C:    r.CRC32C,
+		Md5:       r.MD5,
+		Crc32C:    r.GetCRC32C(),
 		HasCrc32C: true,
 	}
 }

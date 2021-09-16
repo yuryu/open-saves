@@ -39,8 +39,8 @@ type BlobRef struct {
 	Chunked bool
 
 	// Checksums have checksums for each blob object associated with the BlobRef entity.
-	// Record.{MD5Hash,CRC32C} must be used for inline blobs, and
-	// ChunkRef.{MD5Hash,CRC32C} must be used for chunked blobs.
+	// Record.{MD5,CRC32C} must be used for inline blobs, and
+	// ChunkRef.{MD5,CRC32C} must be used for chunked blobs.
 	Checksums `datastore:",flatten"`
 
 	// Timestamps keeps track of creation and modification times and stores a randomly
@@ -60,23 +60,12 @@ var _ datastore.KeyLoader = new(BlobRef)
 // Save implements the Datastore PropertyLoadSaver interface and converts the properties
 // field in the struct to separate Datastore properties.
 func (b *BlobRef) Save() ([]datastore.Property, error) {
-	ps, err := b.Checksums.Save()
-	if err != nil {
-		return nil, err
-	}
-	ps2, err := datastore.SaveStruct(b)
-	if err != nil {
-		return nil, err
-	}
-	return append(ps, ps2...), nil
+	return datastore.SaveStruct(b)
 }
 
 // Load implements the Datastore PropertyLoadSaver interface and converts Datstore
 // properties to the Properties field.
 func (b *BlobRef) Load(ps []datastore.Property) error {
-	if err := b.Checksums.Load(ps); err != nil {
-		return err
-	}
 	return datastore.LoadStruct(b, ps)
 }
 
@@ -125,8 +114,8 @@ func (b *BlobRef) ToProto() *pb.BlobMetadata {
 		StoreKey:  b.StoreKey,
 		RecordKey: b.RecordKey,
 		Size:      b.Size,
-		Md5Hash:   b.MD5Hash,
-		Crc32C:    b.CRC32C,
+		Md5:       b.MD5,
+		Crc32C:    b.GetCRC32C(),
 		HasCrc32C: true,
 	}
 }

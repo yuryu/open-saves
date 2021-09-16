@@ -67,7 +67,7 @@ type RecordUpdater func(record *record.Record) (*record.Record, error)
 func removeInlineBlob(r *record.Record) *record.Record {
 	r.Blob = nil
 	r.BlobSize = 0
-	r.MD5Hash = nil
+	r.MD5 = nil
 	r.CRC32C = 0 // 0 is a possible CRC32C value but would still help debugging.
 	return r
 }

@@ -45,7 +45,7 @@ func TestChunkRef_SaveLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Save returned error: %v", err)
 	}
-	assert.Len(t, ps, 4)
+	assert.Len(t, ps, 6)
 	loaded := new(ChunkRef)
 	if err := loaded.Load(ps); err != nil {
 		t.Fatalf("Load returned error: %v", err)
@@ -83,6 +83,9 @@ func TestChunkRef_CacheKey(t *testing.T) {
 
 func TestChunkRef_EncodeDecodeBytes(t *testing.T) {
 	c := New(uuid.New(), 42)
+	testMD5 := []byte{0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f}
+	c.CRC32C = 0x12345678
+	c.MD5 = testMD5
 	encoded, err := c.EncodeBytes()
 	if err != nil {
 		t.Fatalf("EncodeBytes failed with error: %v", err)
@@ -99,6 +102,8 @@ func TestChunkRef_EncodeDecodeBytes(t *testing.T) {
 		assert.Equal(t, c.Number, decoded.Number)
 		assert.Equal(t, c.Size, decoded.Size)
 		assert.Equal(t, c.Status, decoded.Status)
+		assert.Equal(t, c.Checksums.CRC32C, decoded.CRC32C)
+		assert.Equal(t, c.Checksums.MD5, decoded.MD5)
 		assert.Equal(t, c.Timestamps.Signature, decoded.Timestamps.Signature)
 		assert.True(t, c.Timestamps.CreatedAt.Equal(decoded.Timestamps.CreatedAt))
 		assert.True(t, c.Timestamps.UpdatedAt.Equal(decoded.Timestamps.UpdatedAt))

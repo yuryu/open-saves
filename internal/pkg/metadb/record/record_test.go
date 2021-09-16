@@ -15,12 +15,15 @@
 package record
 
 import (
+	"crypto/md5"
+	"hash/crc32"
 	"testing"
 	"time"
 
 	"cloud.google.com/go/datastore"
 	"github.com/google/uuid"
 	pb "github.com/googleforgames/open-saves/api"
+	"github.com/googleforgames/open-saves/internal/pkg/metadb/blobref"
 	"github.com/googleforgames/open-saves/internal/pkg/metadb/timestamps"
 	"github.com/stretchr/testify/assert"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
@@ -31,6 +34,7 @@ func TestRecord_Save(t *testing.T) {
 	createdAt := time.Date(1992, 1, 15, 3, 15, 55, 0, time.UTC)
 	updatedAt := time.Date(1992, 11, 27, 1, 3, 11, 0, time.UTC)
 	signature := uuid.MustParse("34E1A605-C0FD-4A3D-A9ED-9BA42CAFAF6E")
+	md5 := md5.Sum([]byte{0x01, 0x02, 0x03})
 	record := &Record{
 		Key:          "key",
 		Blob:         testBlob,
@@ -43,6 +47,10 @@ func TestRecord_Save(t *testing.T) {
 		OwnerID:      "owner",
 		OpaqueString: "Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
 		Tags:         []string{"a", "b"},
+		Checksums: blobref.Checksums{
+			MD5:    md5[:],
+			CRC32C: 0x12345678,
+		},
 		Timestamps: timestamps.Timestamps{
 			CreatedAt: createdAt,
 			UpdatedAt: updatedAt,
@@ -53,7 +61,7 @@ func TestRecord_Save(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Save should not return err: %v", err)
 	}
-	if assert.Len(t, properties, 8, "Save didn't return the expected number of elements.") {
+	if assert.Len(t, properties, 10, "Save didn't return the expected number of elements.") {
 		idx := 2
 		assert.Equal(t, []datastore.Property{
 			{
@@ -99,6 +107,16 @@ func TestRecord_Save(t *testing.T) {
 				NoIndex: true,
 			},
 			{
+				Name:    "MD5",
+				Value:   md5[:],
+				NoIndex: true,
+			},
+			{
+				Name:    "CRC32C",
+				Value:   int64(0x12345678),
+				NoIndex: true,
+			},
+			{
 				Name: "Timestamps",
 				Value: &datastore.Entity{
 					Properties: []datastore.Property{
@@ -131,6 +149,7 @@ func TestRecord_Load(t *testing.T) {
 	createdAt := time.Date(1992, 1, 15, 3, 15, 55, 0, time.UTC)
 	updatedAt := time.Date(1992, 11, 27, 1, 3, 11, 0, time.UTC)
 	signature := uuid.MustParse("397F94F5-F851-4969-8BD8-7828ABC473A6")
+	md5 := md5.Sum([]byte{0x01, 0x02, 0x03})
 	properties := []datastore.Property{
 		{
 			Name:  "Blob",
@@ -172,6 +191,16 @@ func TestRecord_Load(t *testing.T) {
 			},
 		},
 		{
+			Name:    "MD5",
+			Value:   md5[:],
+			NoIndex: true,
+		},
+		{
+			Name:    "CRC32C",
+			Value:   int64(0x12345678),
+			NoIndex: true,
+		},
+		{
 			Name: "Timestamps",
 			Value: &datastore.Entity{
 				Properties: []datastore.Property{
@@ -207,6 +236,10 @@ func TestRecord_Load(t *testing.T) {
 		OwnerID:      "owner",
 		OpaqueString: "Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
 		Tags:         []string{"a", "b"},
+		Checksums: blobref.Checksums{
+			MD5:    md5[:],
+			CRC32C: 0x12345678,
+		},
 		Timestamps: timestamps.Timestamps{
 			CreatedAt: createdAt,
 			UpdatedAt: updatedAt,
@@ -353,6 +386,9 @@ func TestRecord_CacheKey(t *testing.T) {
 }
 
 func TestRecord_SerializeRecord(t *testing.T) {
+	testBlob := []byte("some-bytes")
+	md5 := md5.Sum(testBlob)
+	crc32c := crc32.Checksum(testBlob, crc32.MakeTable(crc32.Castagnoli))
 	rr := []*Record{
 		{
 			Timestamps: timestamps.Timestamps{
@@ -387,6 +423,10 @@ func TestRecord_SerializeRecord(t *testing.T) {
 			BlobSize: 64,
 			OwnerID:  "new-owner",
 			Tags:     []string{"tag1", "tag2"},
+			Checksums: blobref.Checksums{
+				MD5:    md5[:],
+				CRC32C: int32(crc32c),
+			},
 			Timestamps: timestamps.Timestamps{
 				CreatedAt: time.Unix(100, 0),
 				UpdatedAt: time.Unix(110, 0),

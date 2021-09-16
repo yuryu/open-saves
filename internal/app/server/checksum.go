@@ -19,15 +19,15 @@ func updateChecksums(b []byte, md5 hash.Hash, crc32c hash.Hash32) (hash.Hash, ha
 type withChecksums interface {
 	GetHasCrc32C() bool
 	GetCrc32C() uint32
-	GetMd5Hash() []byte
+	GetMd5() []byte
 }
 
 func verifyChecksumsIfPresent(p withChecksums, md5 []byte, crc32c uint32) error {
-	if len(p.GetMd5Hash()) != 0 {
-		if !bytes.Equal(p.GetMd5Hash(), md5) {
+	if len(p.GetMd5()) != 0 {
+		if !bytes.Equal(p.GetMd5(), md5) {
 			return status.Errorf(codes.DataLoss,
 				"MD5 hash values didn't match: provided[%v], calculated[%v]",
-				p.GetMd5Hash(), md5)
+				p.GetMd5(), md5)
 		}
 	}
 	if p.GetHasCrc32C() {

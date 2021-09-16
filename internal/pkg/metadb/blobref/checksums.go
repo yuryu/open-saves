@@ -1,51 +1,27 @@
 package blobref
 
-import (
-	"cloud.google.com/go/datastore"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
+const (
+	md5PropertyName    = "MD5"
+	crc32cPropertyName = "CRC32C"
 )
-
-const crc32cPropertyName = "CRC32C"
 
 // Checksums is a struct for blob checksums.
 type Checksums struct {
-	// MD5Hash is the MD5 hash value of the associated blob object.
-	MD5Hash []byte `datastore:",noindex"`
+	// MD5 is the MD5 hash value of the associated blob object.
+	MD5 []byte `datastore:",noindex"`
 	// CRC32C is the CRC32C checksum of the associated blob object.
 	// CRC32C uses the Castagnoli polynomial.
-	CRC32C uint32 `datastore:"-"`
+	// This needs to be int32 because Datastore doesn't support unsigned integers...
+	// Use SetCRC32C() and GetCRC32C() for easier access.
+	CRC32C int32 `datastore:",noindex"`
 }
 
-// Assert Checksums implements PropertyLoadSaver.
-var _ datastore.PropertyLoadSaver = new(Checksums)
-
-func (c *Checksums) Save() ([]datastore.Property, error) {
-	properties, err := datastore.SaveStruct(c)
-	if err != nil {
-		return nil, err
-	}
-	properties = append(properties,
-		datastore.Property{
-			Name:    crc32cPropertyName,
-			Value:   int64(c.CRC32C),
-			NoIndex: true,
-		},
-	)
-	return properties, nil
+// SetCRC32C sets v to CRC32C.
+func (c *Checksums) SetCRC32C(v uint32) {
+	c.CRC32C = int32(v)
 }
 
-func (c *Checksums) Load(ps []datastore.Property) error {
-	for i, p := range ps {
-		if p.Name == crc32cPropertyName {
-			if v, ok := p.Value.(int64); ok {
-				ps[i] = ps[len(ps)-1]
-				ps = ps[:len(ps)-1]
-				c.CRC32C = uint32(v)
-			} else {
-				return status.Errorf(codes.Internal, "CRC32C property is not integer: %v", p.Value)
-			}
-		}
-	}
-	return datastore.LoadStruct(c, ps)
+// GetCRC32C returns CRC32C.
+func (c *Checksums) GetCRC32C() uint32 {
+	return uint32(c.CRC32C)
 }

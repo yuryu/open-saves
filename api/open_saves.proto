@@ -371,7 +371,7 @@ message BlobMetadata {
   // If supplied for uploads, the server validates the content using the hash value.
   // For downloads, the server returns the stored hash value of the blob content.
   // The length of the hash value is 0 (not present) or 16 (present) bytes.
-  bytes md5Hash = 5;
+  bytes md5 = 5;
 
   // crc32c is the CRC32C checksum of the blob content.
   // Specifically, it uses the Castagnoli polynomial. https://pkg.go.dev/hash/crc32#pkg-constants
@@ -431,7 +431,7 @@ message ChunkMetadata {
   // If supplied for uploads, the server validates the content using the hash value.
   // For downloads, the server returns the stored hash value of the chunk content.
   // The length of the hash value is 0 (not present) or 16 (present) bytes.
-  bytes md5Hash = 5;
+  bytes md5 = 5;
 
   // crc32c is the CRC32C checksum of the chunk content.
   // Specifically, it uses the Castagnoli polynomial. https://pkg.go.dev/hash/crc32#pkg-constants

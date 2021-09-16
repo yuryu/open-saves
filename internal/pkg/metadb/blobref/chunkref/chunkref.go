@@ -75,24 +75,13 @@ func (c *ChunkRef) LoadKey(k *datastore.Key) error {
 // Load implements the Datastore PropertyLoadSaver interface and converts Datastore
 // properties to corresponding struct fields.
 func (c *ChunkRef) Load(ps []datastore.Property) error {
-	if err := c.Checksums.Load(ps); err != nil {
-		return err
-	}
 	return datastore.LoadStruct(c, ps)
 }
 
 // Save implements the Datastore PropertyLoadSaver interface and converts struct fields
 // to Datastore properties.
 func (c *ChunkRef) Save() ([]datastore.Property, error) {
-	ps, err := c.Checksums.Save()
-	if err != nil {
-		return nil, err
-	}
-	ps2, err := datastore.SaveStruct(c)
-	if err != nil {
-		return nil, err
-	}
-	return append(ps, ps2...), nil
+	return datastore.SaveStruct(c)
 }
 
 func (c *ChunkRef) ObjectPath() string {
@@ -145,8 +134,8 @@ func (c *ChunkRef) ToProto() *pb.ChunkMetadata {
 		SessionId: c.BlobRef.String(),
 		Number:    int64(c.Number),
 		Size:      int64(c.Size),
-		Md5Hash:   c.MD5Hash,
-		Crc32C:    c.CRC32C,
+		Md5:       c.MD5,
+		Crc32C:    c.GetCRC32C(),
 		HasCrc32C: true,
 	}
 }
