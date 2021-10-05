@@ -1086,3 +1086,31 @@ func TestOpenSaves_AtomicIncDecInt(t *testing.T) {
 	assert.Nil(t, res)
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }
+
+func generateTestString(length int) string {
+	runes := make([]rune, length)
+	for i := 0; i < length; i++ {
+		runes[i] = rune('0' + i%('z'-'0'))
+	}
+	return string(runes)
+}
+
+func TestOpenSaves_RecordTooBig(t *testing.T) {
+	ctx := context.Background()
+	_, listener := getOpenSavesServer(ctx, t, "gcp")
+	_, client := getTestClient(ctx, t, listener)
+	store := &pb.Store{Key: uuid.New().String()}
+	setupTestStore(ctx, t, client, store)
+	record := &pb.Record{Key: uuid.New().String()}
+	const opaqueStringLimit = 32 * 1024
+	record.OpaqueString = generateTestString(opaqueStringLimit)
+	setupTestRecord(ctx, t, client, store.Key, record)
+	record.OpaqueString = generateTestString(opaqueStringLimit + 1)
+
+	_, err := client.UpdateRecord(ctx, &pb.UpdateRecordRequest{
+		StoreKey: store.Key,
+		Record:   record,
+	})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err),
+		"UpdateRecord should return InvalidArgument when OpaqueString is too big.")
+}
